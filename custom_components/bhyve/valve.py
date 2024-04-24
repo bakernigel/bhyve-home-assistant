@@ -11,6 +11,7 @@ from homeassistant.components.valve import (
     DOMAIN as VALVE_DOMAIN,
     ValveDeviceClass,
     ValveEntity,
+    ValveEntityFeature,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_ENTITY_ID
@@ -194,6 +195,10 @@ async def async_setup_entry(
 
 class BHyveZoneValve(BHyveDeviceEntity, ValveEntity):
     """Define a BHyve zone valve."""
+
+    _attr_device_class = ValveDeviceClass.WATER
+    _attr_supported_features = ValveEntityFeature.OPEN | ValveEntityFeature.CLOSE
+    _attr_reports_position = False
 
     def __init__(self, hass, bhyve, device, zone, zone_name, device_programs, icon):
         """Initialize the valve."""
@@ -454,9 +459,9 @@ class BHyveZoneValve(BHyveDeviceEntity, ValveEntity):
         return f"{self._mac_address}:{self._device_id}:{self._zone_id}:switch"
 
     @property
-    def is_on(self):
+    def is_closed(self):
         """Return the status of the sensor."""
-        return self._is_on
+        return not self._is_on
 
     async def set_smart_watering_soil_moisture(self, percentage):
         """Set the soil moisture percentage for the zone."""
@@ -528,7 +533,7 @@ class BHyveZoneValve(BHyveDeviceEntity, ValveEntity):
         self._is_on = False
         await self._send_station_message(station_payload)
 
-    async def async_turn_on(self, **kwargs: Any) -> None:
+    async def async_open_valve(self, **kwargs: Any) -> None:
         """Turn the valve on."""
         run_time = self._manual_preset_runtime / 60
         if run_time == 0:
@@ -541,6 +546,6 @@ class BHyveZoneValve(BHyveDeviceEntity, ValveEntity):
 
         await self.start_watering(run_time)
 
-    async def async_turn_off(self, **kwargs: Any) -> None:
+    async def async_close_valve(self, **kwargs: Any) -> None:
         """Turn the valve off."""
         await self.stop_watering()
