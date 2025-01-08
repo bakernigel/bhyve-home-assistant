@@ -2,7 +2,7 @@
 
 import json
 import logging
-from asyncio import AbstractEventLoop, ensure_future
+from asyncio import AbstractEventLoop
 from collections.abc import Callable
 from math import ceil
 from typing import Any
@@ -34,19 +34,19 @@ class OrbitWebsocket:
         loop: AbstractEventLoop,
         session: aiohttp.ClientSession,
         url: str,
-        async_callback: Callable,
     ) -> None:
         """Create resources for websocket communication."""
         self._token: str = token
-        self._loop = loop
+        self._loop: AbstractEventLoop = loop
         self._session: aiohttp.ClientSession = session
         self._url: str = url
-        self._async_callback: Callable = async_callback
         self._state: str = STATE_STOPPED
 
         self._heartbeat_cb = None
         self._heartbeat: int = 25
         self._ws: ClientWebSocketResponse | None = None
+
+        self._data_received_cbs: list = []
 
     def _cancel_heartbeat(self) -> None:
         if self._heartbeat_cb is not None:
@@ -84,9 +84,9 @@ class OrbitWebsocket:
         """Start the websocket."""
         if self.state != STATE_RUNNING:
             self.state = STATE_STARTING
-        self._loop.create_task(self.running())
+        self._loop.create_task(self.start_listening())
 
-    async def running(self) -> None:  # noqa: PLR0912
+    async def start_listening(self) -> None:  # noqa: PLR0912
         """Start websocket connection."""
         try:
             if self._ws is None or self._ws.closed or self.state != STATE_RUNNING:
@@ -117,7 +117,9 @@ class OrbitWebsocket:
                         _LOGGER.debug(f"msg received {msg!s}")  # noqa: G004
 
                         if msg.type == WSMsgType.TEXT:
-                            ensure_future(self._async_callback(json.loads(msg.data)))
+                            self._loop.call_soon_threadsafe(
+                                self._callback, json.loads(msg.data)
+                            )
 
                         elif msg.type == WSMsgType.PING:
                             await self._ws.pong()
@@ -187,3 +189,7 @@ class OrbitWebsocket:
             _LOGGER.warning(
                 "Tried to send message whilst websocket closed; state: %s", self.state
             )
+
+    def register_data_callback(self, callback: Callable) -> None:
+        """Register a data update callback."""
+        self._callback = callback
