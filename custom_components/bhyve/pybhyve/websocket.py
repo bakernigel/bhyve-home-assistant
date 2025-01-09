@@ -34,6 +34,7 @@ class OrbitWebsocket:
         loop: AbstractEventLoop,
         session: aiohttp.ClientSession,
         url: str,
+        async_callback: Callable,
     ) -> None:
         """Create resources for websocket communication."""
         self._token: str = token
@@ -41,6 +42,7 @@ class OrbitWebsocket:
         self._session: aiohttp.ClientSession = session
         self._url: str = url
         self._state: str = STATE_STOPPED
+        self._async_callback: Callable = async_callback
 
         self._heartbeat_cb = None
         self._heartbeat: int = 25
@@ -68,7 +70,7 @@ class OrbitWebsocket:
 
     async def _ping(self) -> None:
         if self._ws is not None:
-            await self._ws.send_str(json.dumps({"event": "ping"}))
+            await self.send({"event": "ping"})
             self._reset_heartbeat()
 
     @property
@@ -91,7 +93,6 @@ class OrbitWebsocket:
         try:
             if self._ws is None or self._ws.closed or self.state != STATE_RUNNING:
                 async with self._session.ws_connect(self._url) as self._ws:
-                    _LOGGER.info("Authenticating websocket")
                     await self._ws.send_str(
                         json.dumps(
                             {
@@ -117,11 +118,10 @@ class OrbitWebsocket:
                         _LOGGER.debug(f"msg received {msg!s}")  # noqa: G004
 
                         if msg.type == WSMsgType.TEXT:
-                            self._loop.call_soon_threadsafe(
-                                self._callback, json.loads(msg.data)
-                            )
+                            await self._async_callback(json.loads(msg.data))
 
                         elif msg.type == WSMsgType.PING:
+                            _LOGGER.debug("Websocket received PING")
                             await self._ws.pong()
 
                         elif msg.type == WSMsgType.CLOSE:
@@ -184,12 +184,9 @@ class OrbitWebsocket:
     async def send(self, payload: Any) -> None:
         """Send a websocket message."""
         if self._ws is not None and not self._ws.closed:
+            _LOGGER.debug("Sending message: %s", payload)
             await self._ws.send_str(json.dumps(payload))
         else:
             _LOGGER.warning(
                 "Tried to send message whilst websocket closed; state: %s", self.state
             )
-
-    def register_data_callback(self, callback: Callable) -> None:
-        """Register a data update callback."""
-        self._callback = callback

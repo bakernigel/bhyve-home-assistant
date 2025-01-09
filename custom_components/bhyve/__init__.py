@@ -57,7 +57,7 @@ async def async_setup_entry(
 
     entry.async_create_background_task(
         hass,
-        coordinator.client_listen(hass, entry, bhyve_client=bhyve_client),
+        coordinator.client_listen(),
         "websocket_task",
     )
 

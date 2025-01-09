@@ -3,9 +3,6 @@
 import logging
 
 from homeassistant.core import callback
-from homeassistant.exceptions import (
-    HomeAssistantError,
-)
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityDescription
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -36,6 +33,10 @@ class BHyveDeviceEntity(CoordinatorEntity[BHyveUpdateCoordinator]):
     ) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator=coordinator)
+        _LOGGER.info(
+            "Creating %s: %s", self.__class__.__name__, entity_description.name
+        )
+
         self.device = device
         self._mac_address = device.get("mac_address")
         self.entity_description = entity_description
@@ -63,7 +64,6 @@ class BHyveDeviceEntity(CoordinatorEntity[BHyveUpdateCoordinator]):
     def _update_attrs(self, device: BHyveDevice) -> None:
         """Update state attributes."""
         self._attr_available = device.get("is_connected", False)
-        return  # pragma: no cover
 
     @callback
     def _handle_coordinator_update(self) -> None:

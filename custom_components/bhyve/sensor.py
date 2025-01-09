@@ -15,7 +15,7 @@ from homeassistant.const import (
     EntityCategory,
     UnitOfTemperature,
 )
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
@@ -53,13 +53,14 @@ async def async_setup_entry(
     devices = filter_configured_devices(entry, coordinator.data.devices)
 
     for device in devices:
+        device_name = device.get("name")
         if device.get("type") == DEVICE_SPRINKLER:
             sensors.append(
                 BHyveStateSensor(
                     coordinator=coordinator,
                     entity_description=BHyveSensorDescription(
                         key="state",
-                        name=f"{device.get("name")} state",
+                        name=f"{device_name} state",
                         icon="mdi:information",
                         entity_category=EntityCategory.DIAGNOSTIC,
                     ),
@@ -72,9 +73,7 @@ async def async_setup_entry(
                 # there is only one (eg a hose timer)
                 zone_name = zone.get("name", None)
                 if zone_name is None:
-                    zone_name = (
-                        device.get("name") if len(all_zones) == 1 else "Unnamed Zone"
-                    )
+                    zone_name = device_name if len(all_zones) == 1 else "Unnamed Zone"
                 sensors.append(
                     BHyveZoneHistorySensor(
                         coordinator=coordinator,
@@ -90,38 +89,26 @@ async def async_setup_entry(
                     )
                 )
 
-            if device.get("battery", None) is not None:
-                sensors.append(
-                    BHyveBatterySensor(
-                        coordinator=coordinator,
-                        entity_description=BHyveSensorDescription(
-                            key="battery",
-                            name=f"{device.get("name")} battery level",
-                            device_class=SensorDeviceClass.BATTERY,
-                            entity_category=EntityCategory.DIAGNOSTIC,
-                            state_class=SensorStateClass.MEASUREMENT,
-                        ),
-                        device=device,
-                    )
-                )
         if device.get("type") == DEVICE_FLOOD:
             sensors.append(
                 BHyveTemperatureSensor(
                     coordinator=coordinator,
                     entity_description=BHyveSensorDescription(
                         key="temperature",
-                        name=f"{device.get("name")} temperature",
+                        name=f"{device_name} temperature",
                         device_class=SensorDeviceClass.TEMPERATURE,
                     ),
                     device=device,
                 )
             )
+
+        if device.get("battery", None) is not None:
             sensors.append(
                 BHyveBatterySensor(
                     coordinator=coordinator,
                     entity_description=BHyveSensorDescription(
                         key="battery",
-                        name=f"{device.get("name")} battery level",
+                        name=f"{device.get("name")} battery",
                         device_class=SensorDeviceClass.BATTERY,
                         entity_category=EntityCategory.DIAGNOSTIC,
                         state_class=SensorStateClass.MEASUREMENT,
@@ -137,24 +124,9 @@ async def async_setup_entry(
 class BHyveSensorDescription(SensorEntityDescription):
     """Describes sensor entities."""
 
-    name: str = ""
-
 
 class BHyveSensorEntity(BHyveDeviceEntity, SensorEntity):
     """Define a BHyve sensor."""
-
-    def __init__(
-        self,
-        coordinator: BHyveUpdateCoordinator,
-        entity_description: BHyveSensorDescription,
-        device: BHyveDevice,
-    ) -> None:
-        """Initialize the sensor."""
-        super().__init__(
-            coordinator=coordinator,
-            entity_description=entity_description,
-            device=device,
-        )
 
 
 class BHyveBatterySensor(BHyveSensorEntity):
@@ -162,20 +134,6 @@ class BHyveBatterySensor(BHyveSensorEntity):
 
     _state: int | None = None
     _attr_native_unit_of_measurement: str = PERCENTAGE
-
-    def __init__(
-        self,
-        coordinator: BHyveUpdateCoordinator,
-        entity_description: BHyveSensorDescription,
-        device: BHyveDevice,
-    ) -> None:
-        """Initialize the sensor."""
-        super().__init__(
-            coordinator=coordinator,
-            entity_description=entity_description,
-            device=device,
-        )
-        # self._update_attrs(device)
 
     def _update_attrs(self, device: BHyveDevice) -> None:
         battery = device.get("battery")
@@ -248,8 +206,6 @@ class BHyveZoneHistorySensor(BHyveSensorEntity):
         self._zone = zone
         self._zone_id = zone.get("station")
 
-        _LOGGER.info("Creating history sensor: %s", entity_description.name)
-
     def _update_attrs(self, device: BHyveDevice) -> None:
         """Return the state of the entity."""
         history = self.coordinator.data.get_history(device.get("id")) or []
@@ -316,20 +272,6 @@ class BHyveZoneHistorySensor(BHyveSensorEntity):
 class BHyveStateSensor(BHyveSensorEntity):
     """Define a BHyve sensor."""
 
-    def __init__(
-        self,
-        coordinator: BHyveUpdateCoordinator,
-        entity_description: BHyveSensorDescription,
-        device: BHyveDevice,
-    ) -> None:
-        """Initialize the sensor."""
-        _LOGGER.info("Creating state sensor: %s", entity_description.name)
-        super().__init__(
-            coordinator=coordinator,
-            entity_description=entity_description,
-            device=device,
-        )
-
     def _update_attrs(self, device: BHyveDevice) -> None:
         """Return the state of the entity."""
         self._attr_native_value = device.get("status", {}).get(
@@ -357,21 +299,6 @@ class BHyveTemperatureSensor(BHyveSensorEntity):
     _attr_native_value: str | None
     _attr_native_unit_of_measurement = UnitOfTemperature.FAHRENHEIT
     _state_class = SensorStateClass.MEASUREMENT
-
-    def __init__(
-        self,
-        coordinator: BHyveUpdateCoordinator,
-        entity_description: BHyveSensorDescription,
-        device: BHyveDevice,
-    ) -> None:
-        """Initialize the sensor."""
-        _LOGGER.info("Creating temperature sensor: %s", entity_description.name)
-        super().__init__(
-            coordinator=coordinator,
-            entity_description=entity_description,
-            device=device,
-        )
-        self._update_attrs(device)
 
     def _update_attrs(self, device: BHyveDevice) -> None:
         status = device.get("status", {})

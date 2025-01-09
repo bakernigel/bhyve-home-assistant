@@ -35,6 +35,7 @@ class BHyveApiData:
     devices: list[BHyveDevice]
     programs: list[BHyveTimerProgram]
     histories: dict[str, Any]
+    landscapes: list[BHyveZoneLandscape]
 
     def get_device(self, device_id: str) -> BHyveDevice | None:
         """Get device by id."""

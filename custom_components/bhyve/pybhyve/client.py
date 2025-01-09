@@ -48,9 +48,7 @@ class BHyveClient:
         self._last_poll_landscapes: float = 0
 
         self.data: BHyveApiData = BHyveApiData(
-            devices=[],
-            programs=[],
-            histories={},
+            devices=[], programs=[], histories={}, landscapes=[]
         )
 
     async def get_data(self) -> BHyveApiData:
@@ -184,12 +182,7 @@ class BHyveClient:
 
         return self._token is not None
 
-    async def _websocket_data_received(self, data: dict) -> None:
-        event = data.get("event")
-
-        _LOGGER.debug("Websocket event: %s", event)
-
-    async def listen(self, loop: AbstractEventLoop) -> None:
+    async def listen(self, async_callback: Callable) -> None:
         """Start listening to the Orbit event stream."""
         if self._token is None:
             msg = "Client is not logged in"
@@ -197,12 +190,16 @@ class BHyveClient:
 
         self._websocket = OrbitWebsocket(
             token=self._token,
-            loop=loop,
+            loop=asyncio.get_event_loop(),
             session=self._session,
             url=self._ws_url,
+            async_callback=async_callback,
         )
-        self._websocket.register_data_callback(self._websocket_data_received)
-        self._websocket.start()
+
+    async def start(self) -> None:
+        """Start the websocket."""
+        if self._websocket is not None:
+            self._websocket.start()
 
     async def stop(self) -> None:
         """Stop the websocket."""
@@ -265,17 +262,3 @@ class BHyveClient:
         """Send a message via the websocket."""
         if self._websocket is not None:
             await self._websocket.send(payload)
-
-    def _schedule_data_callback(self, cb: Callable) -> None:
-        """Schedule a data callback."""
-        self._loop.call_soon_threadsafe(cb, self.data)
-
-    def _schedule_data_callbacks(self) -> None:
-        """Schedule a data callbacks."""
-        for cb in self._data_update_cbs:
-            self._schedule_data_callback(cb)
-
-    def register_data_callback(self, callback: Callable) -> None:
-        """Register a data update callback."""
-        if callback not in self._data_update_cbs:
-            self._data_update_cbs.append(callback)
