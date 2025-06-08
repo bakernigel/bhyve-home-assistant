@@ -1,11 +1,11 @@
 {
   "domain": "bhyve",
   "name": "Orbit B-hyve",
-  "codeowners": ["@sebr"],
+  "codeowners": ["@bakernigel"],
   "config_flow": true,
-  "documentation": "https://github.com/sebr/bhyve-home-assistant/blob/main/README.md",
+  "documentation": "https://github.com/bakernigel/bhyve-home-assistant/blob/main/README.md",
   "integration_type": "hub",
   "iot_class": "cloud_push",
-  "issue_tracker": "https://github.com/sebr/bhyve-home-assistant/issues",
-  "version": "3.2.6"
+  "issue_tracker": "https://github.com/bakernigel/bhyve-home-assistant/issues",
+  "version": "1.0.0"
 }
