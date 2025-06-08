@@ -59,12 +59,19 @@ async def async_setup_entry(
     devices = filter_configured_devices(entry, await bhyve.devices)
     
     programs = await bhyve.timer_programs
+    device_by_id = {}
     calendars = []
     
     for device in devices:
-        calendars.append(BhyveCalendarEntity(hass, bhyve, device, programs))
-          
-    _LOGGER.warning("Creating calendar: Device:%s Programs %s", device, programs)
+        device_id = device.get("id")
+        device_by_id[device_id] = device
+        for program in programs:
+            program_device = device_by_id.get(program.get("device_id"))
+            program_id = program.get("program")
+            if program_device is not None and program_id is not None:        
+                _LOGGER.debug("Creating calendar: Device:%s Program %s", device, program)
+                calendars.append(BhyveCalendarEntity(hass, bhyve, device, program))                    
+            
     async_add_entities(calendars, True)
 
 class BhyveCalendarEntity(BHyveWebsocketEntity, CalendarEntity):
@@ -75,75 +82,34 @@ class BhyveCalendarEntity(BHyveWebsocketEntity, CalendarEntity):
         hass: HomeAssistant,
         bhyve: BHyveClient,
         device: BHyveDevice,
-        programs: BHyveTimerProgram,       
+        program: BHyveTimerProgram,       
     ) -> None:    
         """Initialize a  calendar entity."""
  
-        device_name = device.get("name", "Unknown switch")       
-        _LOGGER.warning("Initialize a  calendar entity: Device:%s Programs %s", device_name, programs)
-        
         device_name = device.get("name", "Unknown switch")
-        name = f"{device_name} calendar"
+        program_name = program.get("name", "unknown")       
+        _LOGGER.debug("Initialize a  calendar entity: Device:%s Program %s", device_name, program)
+       
+        name = f"{device_name} {program_name} calendar"
         
         super().__init__(hass, bhyve, device, name, "calendar")
         
         self._available = True       
-        self._programs = programs 
+        self._program = program
+        self._device_id = program.get("device_id")
+        self._program_id = program.get("id") 
 
-        self._attr_unique_id = f"{device_name}BHYVE-calendar"
         self._event: CalendarEvent | None = None
-
+        
+    @property
+    def unique_id(self) -> str:
+        """Return the unique id for the calendar program."""
+        return f"bhyve:calendar:{self._program_id}"        
 
     @property
     def event(self) -> CalendarEvent | None:
         """Return the current or next upcoming event."""
-        now = dt_util.now()
-        earliest_event = None
-        earliest_start_time = None
-
-        for program in self._programs:
-            if not program.get("program"):
-                continue
-
-            program_name = program.get("name", "unknown")
-            frequency = program.get("frequency")
-            interval = frequency.get("interval")
-            interval_start_time = orbit_time_to_local_time(frequency.get("interval_start_time"))
-
-            # Find the next or current event for this program
-            current_time = now
-            while interval_start_time <= current_time + timedelta(days=60):
-                event_start = interval_start_time
-                event_end = interval_start_time + timedelta(days=1)
-
-                # Check if the event is current or upcoming
-                if event_start <= current_time < event_end:
-                    # Current event
-                    event = CalendarEvent(
-                        summary=program_name,
-                        start=event_start.date(),
-                        end=event_end.date(),
-                        description=program_name,
-                        location="Home",
-                        uid=f"{program.get('program')}/{event_start}",
-                    )
-                    return event  # Return the current event immediately
-                elif event_start > current_time:
-                    # Upcoming event
-                    if earliest_start_time is None or event_start < earliest_start_time:
-                        earliest_start_time = event_start
-                        earliest_event = CalendarEvent(
-                            summary=program_name,
-                            start=event_start.date(),
-                            end=event_end.date(),
-                            description=program_name,
-                            location="Home",
-                            uid=f"{program.get('program')}/{event_start}",
-                        )
-
-                interval_start_time += timedelta(days=interval)
-
-        return earliest_event  # Return the next upcoming event, or None if no events are found
+        return None
 
 
     def _handle_upcoming_event(self) -> dict[str, Any] | None:
@@ -155,63 +121,63 @@ class BhyveCalendarEntity(BHyveWebsocketEntity, CalendarEntity):
     ) -> list[CalendarEvent]:
     
         event_list: list[CalendarEvent] = []
-        for program in self._programs:
-            if program_name := program.get("program"):
-                full_program_name = program.get("name", "unknown")
-                frequency = program.get("frequency")
-                interval = frequency.get("interval")
-                interval_start_time = frequency.get("interval_start_time")
-                               
-                start_date_time = orbit_time_to_local_time(interval_start_time)
-                event_start = start_date_time.date()
-                end_date_time = start_date_time + timedelta(days=1)
-                event_end = end_date_time.date()
-                
-                
-                _LOGGER.warning("Raw Event list. program_name:%s full_program_name:%s interval:%s interval_start_time:%s DATE: %s", 
-                  program_name,
-                  full_program_name, 
-                  interval,
-                  interval_start_time,
-                  event_start,
-                )
-                
+
+        if program_name := self._program.get("program"):
+            full_program_name = self._program.get("name", "unknown")
+            frequency = self._program.get("frequency")
+            interval = frequency.get("interval")
+            interval_start_time = frequency.get("interval_start_time")
+                           
+            start_date_time = orbit_time_to_local_time(interval_start_time)
+            event_start = start_date_time.date()
+            end_date_time = start_date_time + timedelta(days=1)
+            event_end = end_date_time.date()
+            
+            
+            _LOGGER.debug("Raw Event list. program_name:%s full_program_name:%s interval:%s interval_start_time:%s DATE: %s", 
+              program_name,
+              full_program_name, 
+              interval,
+              interval_start_time,
+              event_start,
+            )
+            
+            event = CalendarEvent(
+                summary=full_program_name,
+                start=event_start,
+                end=event_end,
+                description=full_program_name,
+                location="Home",
+                uid=f"{program_name}/{interval_start_time}",
+            )
+            
+            _LOGGER.debug("First Event :%s", event)
+            
+#                event_list.append(event)  Event is not needed for start date if it is in the future. It will be added below. What if in the past ?
+            
+            # Now fill the calendar with all events for the next 60 days.
+            threshold_date = dt_util.now() + timedelta(days=60)
+
+            current_date_time = start_date_time
+            while current_date_time <= threshold_date:
+                event_start = current_date_time.date()
+                event_end = (current_date_time + timedelta(days=1)).date()
                 event = CalendarEvent(
                     summary=full_program_name,
                     start=event_start,
                     end=event_end,
                     description=full_program_name,
                     location="Home",
-                    uid=f"{program_name}/{interval_start_time}",
+                    uid=f"{program_name}/{event_start}",
                 )
-                
-                _LOGGER.warning("First Event :%s", event)
-                
-#                event_list.append(event)  Event is not needed for start date if it is in the future. It will be added below. What if in the past ?
-                
-                # Now fill the calendar with all events for the next 60 days.
-                threshold_date = dt_util.now() + timedelta(days=60)
+                event_list.append(event)
+                current_date_time += timedelta(days=interval)
+            
+            # Log if the loop was terminated due to exceeding threshold
+            if current_date_time > threshold_date:
+                _LOGGER.debug("Stopped at %s for program: %s", current_date_time, full_program_name)
 
-                current_date_time = start_date_time
-                while current_date_time <= threshold_date:
-                    event_start = current_date_time.date()
-                    event_end = (current_date_time + timedelta(days=1)).date()
-                    event = CalendarEvent(
-                        summary=full_program_name,
-                        start=event_start,
-                        end=event_end,
-                        description=full_program_name,
-                        location="Home",
-                        uid=f"{program_name}/{event_start}",
-                    )
-                    event_list.append(event)
-                    current_date_time += timedelta(days=interval)
-                
-                # Log if the loop was terminated due to exceeding threshold
-                if current_date_time > threshold_date:
-                    _LOGGER.warning("Stopped at %s for program: %s", current_date_time, full_program_name)
-
-        _LOGGER.warning("async_get_events Event List:%s", event_list)
+        _LOGGER.debug("async_get_events Event List:%s", event_list)
         
         return event_list
 
@@ -224,12 +190,37 @@ class BhyveCalendarEntity(BHyveWebsocketEntity, CalendarEntity):
     
         return None
         
+    async def async_added_to_hass(self) -> None:
+        """Register callbacks."""
+        _LOGGER.debug(
+                "Calendar async_added_to_hass",
+        )        
+
+        @callback
+        def update(_device_id: str, data: dict) -> None:
+            """Update the state."""
+            _LOGGER.debug(
+                "Calendar Program update: %s - %s - %s", self.name, self._program_id, str(data)
+            )
+            event = data.get("event")
+            if event == EVENT_PROGRAM_CHANGED:
+                self._ws_unprocessed_events.append(data)
+                self.async_schedule_update_ha_state(True)  # noqa: FBT003
+
+        self._async_unsub_dispatcher_connect = async_dispatcher_connect(
+            self.hass, SIGNAL_UPDATE_PROGRAM.format(self._program_id), update
+        )
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Disconnect dispatcher listener when removed."""
+        if self._async_unsub_dispatcher_connect:
+            self._async_unsub_dispatcher_connect()
 
     def _on_ws_data(self, data: dict) -> None:
         #
         # {'event': 'program_changed' }  # noqa: ERA001
         #
-        _LOGGER.warning("Calendar _on_ws_data Received program data update %s", data)
+        _LOGGER.debug("Calendar _on_ws_data Received program data update %s", data)
 
         event = data.get("event")
         if event is None:
@@ -242,6 +233,6 @@ class BhyveCalendarEntity(BHyveWebsocketEntity, CalendarEntity):
                 self._program = program
 
     def _should_handle_event(self, event_name: str, _data: dict) -> bool:
-        _LOGGER.warning("Calendar _should_handle_event")
+        _LOGGER.debug("Calendar _should_handle_event")
         return event_name in [EVENT_PROGRAM_CHANGED]
         

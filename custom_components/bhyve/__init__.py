@@ -249,7 +249,7 @@ class BHyveWebsocketEntity(BHyveEntity):
         """Retrieve latest state."""
         ws_updates = list(self._ws_unprocessed_events)
         self._ws_unprocessed_events[:] = []
-
+        
         for ws_event in ws_updates:
             self._on_ws_data(ws_event)
 
@@ -318,7 +318,7 @@ class BHyveDeviceEntity(BHyveWebsocketEntity):
                 _LOGGER.info("Device %s reconnected and is now available", self.name)
                 self._available = True
             if self._should_handle_event(event, data):
-                _LOGGER.warning(
+                _LOGGER.info(
                     "Message received: %s - %s - %s",
                     self.name,
                     self._device_id,
