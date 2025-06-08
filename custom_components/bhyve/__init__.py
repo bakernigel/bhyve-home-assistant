@@ -58,6 +58,7 @@ CONFIG_SCHEMA: vol.Schema = vol.Schema(
 )
 
 PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.SENSOR, Platform.SWITCH, Platform.CALENDAR]
+#PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.SENSOR, Platform.SWITCH]
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -317,7 +318,7 @@ class BHyveDeviceEntity(BHyveWebsocketEntity):
                 _LOGGER.info("Device %s reconnected and is now available", self.name)
                 self._available = True
             if self._should_handle_event(event, data):
-                _LOGGER.info(
+                _LOGGER.warning(
                     "Message received: %s - %s - %s",
                     self.name,
                     self._device_id,
