@@ -109,7 +109,53 @@ class BhyveCalendarEntity(BHyveWebsocketEntity, CalendarEntity):
     @property
     def event(self) -> CalendarEvent | None:
         """Return the current or next upcoming event."""
-        return None
+        now = dt_util.now()
+        earliest_event = None
+        earliest_start_time = None
+
+        program = self._program
+        if not program.get("program"):
+            return None
+
+        program_name = program.get("name", "unknown")
+        frequency = program.get("frequency")
+        interval = frequency.get("interval")
+        interval_start_time = orbit_time_to_local_time(frequency.get("interval_start_time"))
+
+        # Find the next or current event for this program
+        current_time = now
+        while interval_start_time <= current_time + timedelta(days=60):
+            event_start = interval_start_time
+            event_end = interval_start_time + timedelta(days=1)
+
+            # Check if the event is current or upcoming
+            if event_start <= current_time < event_end:
+                # Current event
+                event = CalendarEvent(
+                    summary=program_name,
+                    start=event_start.date(),
+                    end=event_end.date(),
+                    description=program_name,
+                    location="Home",
+                    uid=f"{program.get('program')}/{event_start}",
+                )
+                return event  # Return the current event immediately
+            elif event_start > current_time:
+                # Upcoming event
+                if earliest_start_time is None or event_start < earliest_start_time:
+                    earliest_start_time = event_start
+                    earliest_event = CalendarEvent(
+                        summary=program_name,
+                        start=event_start.date(),
+                        end=event_end.date(),
+                        description=program_name,
+                        location="Home",
+                        uid=f"{program.get('program')}/{event_start}",
+                    )
+
+            interval_start_time += timedelta(days=interval)
+
+        return earliest_event  # Return the next upcoming event, or None if no events are found
 
 
     def _handle_upcoming_event(self) -> dict[str, Any] | None:
@@ -129,31 +175,6 @@ class BhyveCalendarEntity(BHyveWebsocketEntity, CalendarEntity):
             interval_start_time = frequency.get("interval_start_time")
                            
             start_date_time = orbit_time_to_local_time(interval_start_time)
-            event_start = start_date_time.date()
-            end_date_time = start_date_time + timedelta(days=1)
-            event_end = end_date_time.date()
-            
-            
-            _LOGGER.debug("Raw Event list. program_name:%s full_program_name:%s interval:%s interval_start_time:%s DATE: %s", 
-              program_name,
-              full_program_name, 
-              interval,
-              interval_start_time,
-              event_start,
-            )
-            
-            event = CalendarEvent(
-                summary=full_program_name,
-                start=event_start,
-                end=event_end,
-                description=full_program_name,
-                location="Home",
-                uid=f"{program_name}/{interval_start_time}",
-            )
-            
-            _LOGGER.debug("First Event :%s", event)
-            
-#                event_list.append(event)  Event is not needed for start date if it is in the future. It will be added below. What if in the past ?
             
             # Now fill the calendar with all events for the next 60 days.
             threshold_date = dt_util.now() + timedelta(days=60)
