@@ -19,7 +19,7 @@ For full instructions on using the integration see https://github.com/sebr/bhyve
 - `binary_sensor` for `flood_sensor` devices which provide liquid detection and temperature alerts when out of threshold.
 - `calendar` adds a calendar entity for each program showing upcoming waterings
 
-[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?category=integration&repository=byhve-home-assistant&owner=bakernigel)
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?category=integration&repository=bhyve-home-assistant&owner=bakernigel)
 
 ## __Installation Using HACS__
 - Download the custom Orbit Bhyve integration from the HACS custom repository using the button above
