@@ -4,6 +4,10 @@ from datetime import datetime, timedelta, timezone
 import logging
 from typing import Any
 
+from homeassistant.exceptions import (
+    HomeAssistantError,
+)
+
 from homeassistant.components.calendar import (
     CalendarEntity,
     CalendarEntityFeature,
@@ -42,6 +46,7 @@ from .const import (
     EVENT_WATERING_COMPLETE,
     EVENT_WATERING_IN_PROGRESS,
     SIGNAL_UPDATE_PROGRAM,
+    SIGNAL_UPDATE_DEVICE,
 )
 
 
@@ -74,7 +79,7 @@ async def async_setup_entry(
             
     async_add_entities(calendars, True)
 
-class BhyveCalendarEntity(BHyveWebsocketEntity, CalendarEntity):
+class BhyveCalendarEntity(BHyveDeviceEntity, CalendarEntity):
     """  Bhyve irrigation calendar entity."""
 
     def __init__(
@@ -101,6 +106,12 @@ class BhyveCalendarEntity(BHyveWebsocketEntity, CalendarEntity):
 
         self._event: CalendarEvent | None = None
         
+        self._device_status = device.get("status", {})
+        self._delay_start = self._device_status.get("rain_delay_started_at", "")
+        self._delay_hours = self._device_status.get("rain_delay", 0)
+        
+        _LOGGER.debug("Init Calendar entity: Device:%s Program:%s Rain Delay:%s", self._device_id, program, self._device_status )
+        
     @property
     def unique_id(self) -> str:
         """Return the unique id for the calendar program."""
@@ -109,6 +120,14 @@ class BhyveCalendarEntity(BHyveWebsocketEntity, CalendarEntity):
     @property
     def event(self) -> CalendarEvent | None:
         """Return the current or next upcoming event."""
+        
+        if not self._program.get("enabled"):
+            _LOGGER.info(
+                            "Skipping next event for disabled program %s",
+                            self._program.get("name", "unknown"),
+            )
+            return
+                    
         now = dt_util.now()
         earliest_event = None
         earliest_start_time = None
@@ -165,39 +184,69 @@ class BhyveCalendarEntity(BHyveWebsocketEntity, CalendarEntity):
     async def async_get_events(
         self, hass: HomeAssistant, start_date: datetime, end_date: datetime
     ) -> list[CalendarEvent]:
-    
-        event_list: list[CalendarEvent] = []
 
+        event_list: list[CalendarEvent] = []
+        if not self._program.get("enabled"):
+            _LOGGER.info(
+                            "Skipping events for disabled program %s",
+                            self._program.get("name", "unknown"),
+            )
+            return event_list
+    
         if program_name := self._program.get("program"):
             full_program_name = self._program.get("name", "unknown")
             frequency = self._program.get("frequency")
             interval = frequency.get("interval")
             interval_start_time = frequency.get("interval_start_time")
-                           
+                               
             start_date_time = orbit_time_to_local_time(interval_start_time)
             
-            # Now fill the calendar with all events for the next 60 days.
+            # Rain delay details
+            
+            rain_delay = self._device_status
+            rain_delay_start = None
+            rain_delay_end = None
+            if rain_delay:
+                rain_delay_start = orbit_time_to_local_time(self._delay_start)
+                if rain_delay_start:
+                    delay_hours = self._delay_hours
+                    rain_delay_end = rain_delay_start + timedelta(hours=delay_hours)
+    
+            # Now fill the calendar with all events for the next 60 days
             threshold_date = dt_util.now() + timedelta(days=60)
-
             current_date_time = start_date_time
             while current_date_time <= threshold_date:
                 event_start = current_date_time.date()
                 event_end = (current_date_time + timedelta(days=1)).date()
-                event = CalendarEvent(
-                    summary=full_program_name,
-                    start=event_start,
-                    end=event_end,
-                    description=full_program_name,
-                    location="Home",
-                    uid=f"{program_name}/{event_start}",
-                )
-                event_list.append(event)
+    
+                # Check if event falls within rain delay period
+                skip_event = False
+                if rain_delay_start and rain_delay_end:
+                    event_datetime = dt_util.as_local(current_date_time)
+                    if rain_delay_start.date() <= event_datetime.date() <= rain_delay_end.date():
+                        skip_event = True
+                        _LOGGER.warning(
+                            "Skipping event on %s for program %s due to rain delay from %s to %s",
+                            event_start, full_program_name, rain_delay_start, rain_delay_end
+                        )
+    
+                if not skip_event:
+                    event = CalendarEvent(
+                        summary=full_program_name,
+                        start=event_start,
+                        end=event_end,
+                        description=full_program_name,
+                        location="Home",
+                        uid=f"{program_name}/{event_start}",
+                    )
+                    event_list.append(event)
+    
                 current_date_time += timedelta(days=interval)
             
             # Log if the loop was terminated due to exceeding threshold
             if current_date_time > threshold_date:
                 _LOGGER.debug("Stopped at %s for program: %s", current_date_time, full_program_name)
-
+    
         _LOGGER.debug("async_get_events Event List:%s", event_list)
         
         return event_list
@@ -210,38 +259,11 @@ class BhyveCalendarEntity(BHyveWebsocketEntity, CalendarEntity):
     ) -> None:
     
         return None
-        
-    async def async_added_to_hass(self) -> None:
-        """Register callbacks."""
-        _LOGGER.debug(
-                "Calendar async_added_to_hass",
-        )        
-
-        @callback
-        def update(_device_id: str, data: dict) -> None:
-            """Update the state."""
-            _LOGGER.debug(
-                "Calendar Program update: %s - %s - %s", self.name, self._program_id, str(data)
-            )
-            event = data.get("event")
-            if event == EVENT_PROGRAM_CHANGED:
-                self._ws_unprocessed_events.append(data)
-                self.async_schedule_update_ha_state(True)  # noqa: FBT003
-
-        self._async_unsub_dispatcher_connect = async_dispatcher_connect(
-            self.hass, SIGNAL_UPDATE_PROGRAM.format(self._program_id), update
-        )
-
-    async def async_will_remove_from_hass(self) -> None:
-        """Disconnect dispatcher listener when removed."""
-        if self._async_unsub_dispatcher_connect:
-            self._async_unsub_dispatcher_connect()
 
     def _on_ws_data(self, data: dict) -> None:
         #
         # {'event': 'program_changed' }  # noqa: ERA001
         #
-        _LOGGER.debug("Calendar _on_ws_data Received program data update %s", data)
 
         event = data.get("event")
         if event is None:
@@ -249,11 +271,18 @@ class BhyveCalendarEntity(BHyveWebsocketEntity, CalendarEntity):
             return
 
         if event == EVENT_PROGRAM_CHANGED:
+            _LOGGER.debug("Calendar EVENT_PROGRAM_CHANGED %s", data)
             program = data.get("program")
             if program is not None:
-                self._program = program
+                if self._program_id == program.get("id"):               
+                    self._program = program
+                
+        if event == EVENT_RAIN_DELAY:
+            _LOGGER.debug("Calendar EVENT_RAIN_DELAY %s", data)
+            self._delay_start = data.get("timestamp", "")
+            self._delay_hours = data.get("delay", 0)                            
 
     def _should_handle_event(self, event_name: str, _data: dict) -> bool:
-        _LOGGER.debug("Calendar _should_handle_event")
-        return event_name in [EVENT_PROGRAM_CHANGED]
+        return event_name in [EVENT_PROGRAM_CHANGED, EVENT_RAIN_DELAY,]
+
         
