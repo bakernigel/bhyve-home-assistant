@@ -279,7 +279,21 @@ class BHyveDataUpdateCoordinator(DataUpdateCoordinator):
             # Update rain delay info
             if "status" not in device_data:
                 device_data["status"] = {}
-            device_data["status"]["rain_delay"] = event_data.get("delay", 0)
+
+            delay = event_data.get("delay", 0)
+
+            device_data["status"]["rain_delay"] = delay
+
+            # Rain-delay WebSocket events do not include
+            # rain_delay_started_at. When a delay is enabled, use the
+            # event timestamp as the start time so calendar entities can
+            # determine which scheduled dates fall within the delay.
+            if delay:
+                device_data["status"]["rain_delay_started_at"] = event_data.get(
+                    "timestamp"
+                )
+            else:
+                device_data["status"]["rain_delay_started_at"] = None
 
         elif event == EVENT_FAULT:
             # Update station fault information

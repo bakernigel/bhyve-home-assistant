@@ -7,5 +7,5 @@
   "integration_type": "hub",
   "iot_class": "cloud_push",
   "issue_tracker": "https://github.com/bakernigel/bhyve-home-assistant/issues",
-  "version": "v2.0.3"
+  "version": "v2.0.4"
 }
