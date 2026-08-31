@@ -6,13 +6,11 @@ from datetime import datetime, timedelta
 import logging
 from typing import Any
 
-from homeassistant.components.calendar import (
-    CalendarEntity,
-    CalendarEvent,
-)
+from homeassistant.components.calendar import CalendarEntity, CalendarEvent
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -22,14 +20,10 @@ from .const import (
     DOMAIN,
 )
 from .pybhyve.client import BHyveClient
-
 from .pybhyve.typings import (
     BHyveDevice,
     BHyveTimerProgram,
 )
-
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
-
 from .util import orbit_time_to_local_time
 
 _LOGGER = logging.getLogger(__name__)
@@ -43,7 +37,6 @@ async def async_setup_entry(
     """Set up BHyve calendar entities."""
 
     bhyve: BHyveClient = hass.data[DOMAIN][entry.entry_id][CONF_CLIENT]
-    
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
 
     devices = await bhyve.devices
@@ -52,16 +45,18 @@ async def async_setup_entry(
     configured_devices = entry.options.get(CONF_DEVICES, [])
 
     valid_devices = [
-        d for d in devices
-        if str(d.get("id")) in configured_devices
-        and d.get("type") != DEVICE_BRIDGE
+        device
+        for device in devices
+        if str(device.get("id")) in configured_devices
+        and device.get("type") != DEVICE_BRIDGE
     ]
 
     device_by_id = {
-        d.get("id"): d for d in valid_devices
+        device.get("id"): device
+        for device in valid_devices
     }
 
-    calendars: list[BhyveCalendarEntity] = []
+    calendars: list[BHyveCalendarEntity] = []
 
     for program in programs:
         device = device_by_id.get(program.get("device_id"))
@@ -73,7 +68,7 @@ async def async_setup_entry(
             continue
 
         calendars.append(
-            BhyveCalendarEntity(
+            BHyveCalendarEntity(
                 coordinator,
                 hass,
                 bhyve,
@@ -84,11 +79,12 @@ async def async_setup_entry(
 
     async_add_entities(calendars)
 
-class BhyveCalendarEntity(CoordinatorEntity, CalendarEntity):
-    """Representation of a BHyve calendar entity."""
+
+class BHyveCalendarEntity(CoordinatorEntity, CalendarEntity):
+    """Representation of a BHyve irrigation program calendar."""
 
     _attr_has_entity_name = True
-    
+
     def __init__(
         self,
         coordinator,
@@ -96,45 +92,39 @@ class BhyveCalendarEntity(CoordinatorEntity, CalendarEntity):
         bhyve: BHyveClient,
         device: BHyveDevice,
         program: BHyveTimerProgram,
-    ) -> None:    
-    
-    
+    ) -> None:
         """Initialize calendar entity."""
-        
+
         super().__init__(coordinator)
-    
+
         self.hass = hass
         self._bhyve = bhyve
         self._device = device
         self._program = program
-    
+
+        self._device_id = device.get("id")
         self._program_id = program.get("id")
-    
+
         device_name = device.get("name", "Unknown Device")
         program_name = program.get("name", "Unknown Program")
-    
+
         self._attr_name = f"{device_name} {program_name} Calendar"
-    
-        self._attr_unique_id = (
-            f"bhyve_calendar_{self._program_id}"
-        )
-    
-        self._attr_has_entity_name = True
-    
+        self._attr_unique_id = f"bhyve_calendar_{self._program_id}"
+
         self._device_status = device.get("status", {})
-    
+
         self._delay_start = self._device_status.get(
             "rain_delay_started_at"
         )
-    
+
         self._delay_hours = self._device_status.get(
             "rain_delay",
             0,
         )
-        
+
     @property
     def event(self) -> CalendarEvent | None:
-        """Return next upcoming event."""
+        """Return the current or next upcoming event."""
 
         events = self._build_events(
             dt_util.now(),
@@ -149,7 +139,8 @@ class BhyveCalendarEntity(CoordinatorEntity, CalendarEntity):
         start_date: datetime,
         end_date: datetime,
     ) -> list[CalendarEvent]:
-        """Return calendar events."""
+        """Return calendar events in the requested range."""
+
         return self._build_events(start_date, end_date)
 
     def _build_events(
@@ -157,11 +148,14 @@ class BhyveCalendarEntity(CoordinatorEntity, CalendarEntity):
         start_date: datetime,
         end_date: datetime,
     ) -> list[CalendarEvent]:
-        """Build event list."""
+        """Build calendar event list."""
 
         events: list[CalendarEvent] = []
 
         if not self._program.get("enabled"):
+            return events
+
+        if not self._program.get("program"):
             return events
 
         frequency = self._program.get("frequency")
@@ -181,43 +175,93 @@ class BhyveCalendarEntity(CoordinatorEntity, CalendarEntity):
         if interval_start_time is None:
             return events
 
-        current = interval_start_time
-
+        #
+        # Rain delay
+        #
+        # B-hyve reports "rain_delay" as the number of hours REMAINING,
+        # not the original duration of the delay.
+        #
         rain_delay_start = None
         rain_delay_end = None
 
-        if self._delay_start:
-            rain_delay_start = orbit_time_to_local_time(
-                self._delay_start
+        try:
+            remaining_hours = int(self._delay_hours or 0)
+        except (TypeError, ValueError):
+            remaining_hours = 0
+
+        if remaining_hours > 0:
+            if self._delay_start:
+                rain_delay_start = orbit_time_to_local_time(
+                    self._delay_start
+                )
+
+            #
+            # The delay value is remaining time, therefore:
+            #
+            #     END = NOW + remaining hours
+            #
+            # Do not calculate:
+            #
+            #     START + remaining hours
+            #
+            rain_delay_end = dt_util.now() + timedelta(
+                hours=remaining_hours
             )
 
-            if rain_delay_start:
-                rain_delay_end = rain_delay_start + timedelta(
-                    hours=self._delay_hours
-                )
+        current = interval_start_time
 
         while current <= end_date:
             if current >= start_date:
-
                 skip_event = False
 
+                #
+                # Calendar entries are intentionally all-day events.
+                #
+                # A scheduled irrigation event should therefore disappear
+                # from the calendar if that calendar date falls within the
+                # active rain-delay date range.
+                #
                 if rain_delay_start and rain_delay_end:
-                    if rain_delay_start <= current <= rain_delay_end:
+                    current_local = dt_util.as_local(current)
+
+                    if (
+                        rain_delay_start.date()
+                        <= current_local.date()
+                        <= rain_delay_end.date()
+                    ):
                         skip_event = True
 
-                if not skip_event:
-                    event = CalendarEvent(
-                        summary=self._program.get(
-                            "name",
-                            "BHyve Program",
-                        ),
-                        start=current.date(),
-                        end=current.date() + timedelta(days=1),
-#                        end=current + timedelta(hours=1),
-                        uid=f"{self._program_id}_{current.isoformat()}",
-                    )
+                        _LOGGER.debug(
+                            "Skipping calendar event %s for program %s "
+                            "due to rain delay %s - %s",
+                            current_local.date(),
+                            self._program.get("name", "Unknown Program"),
+                            rain_delay_start,
+                            rain_delay_end,
+                        )
 
-                    events.append(event)
+                if not skip_event:
+                    event_date = current.date()
+
+                    events.append(
+                        CalendarEvent(
+                            summary=self._program.get(
+                                "name",
+                                "BHyve Program",
+                            ),
+                            start=event_date,
+                            end=event_date + timedelta(days=1),
+                            description=self._program.get(
+                                "name",
+                                "BHyve Program",
+                            ),
+                            location="Home",
+                            uid=(
+                                f"{self._program_id}/"
+                                f"{event_date.isoformat()}"
+                            ),
+                        )
+                    )
 
             current += timedelta(days=interval)
 
@@ -229,37 +273,68 @@ class BhyveCalendarEntity(CoordinatorEntity, CalendarEntity):
         recurrence_id: str | None = None,
         recurrence_range: str | None = None,
     ) -> None:
-        """Delete event."""
-        return None
-        
+        """Calendar events are read-only."""
+
     @callback
     def _handle_coordinator_update(self) -> None:
-        """Handle updated data from coordinator."""
-    
-        programs = self.coordinator.data.get("programs", {})
-    
+        """Handle updated data from the BHyve coordinator."""
+
+        #
+        # coordinator.data["programs"] is a dictionary keyed by program ID.
+        #
+        programs: dict[str, Any] = self.coordinator.data.get(
+            "programs",
+            {},
+        )
+
         updated_program = programs.get(self._program_id)
-    
-        if updated_program:
+
+        if updated_program is not None:
             self._program = updated_program
-    
-        devices = self.coordinator.data.get("devices", {})
-    
-        updated_device = devices.get(self._device.get("id"))
-    
-        if updated_device:
-            self._device = updated_device.get("device", self._device)
-    
-            self._device_status = self._device.get("status", {})
-    
-            self._delay_start = self._device_status.get(
-                "rain_delay_started_at"
-            )
-    
-            self._delay_hours = self._device_status.get(
-                "rain_delay",
-                0,
-            )
-    
-        self.async_write_ha_state()        
-            
+
+        #
+        # coordinator.data["devices"] is a dictionary keyed by device ID.
+        #
+        # Each entry contains:
+        #
+        # {
+        #     "device": {...},
+        #     ...
+        # }
+        #
+        devices: dict[str, Any] = self.coordinator.data.get(
+            "devices",
+            {},
+        )
+
+        updated_device_data = devices.get(self._device_id)
+
+        if updated_device_data is not None:
+            updated_device = updated_device_data.get("device")
+
+            if updated_device is not None:
+                self._device = updated_device
+
+                self._device_status = self._device.get(
+                    "status",
+                    {},
+                )
+
+                self._delay_start = self._device_status.get(
+                    "rain_delay_started_at"
+                )
+
+                self._delay_hours = self._device_status.get(
+                    "rain_delay",
+                    0,
+                )
+
+        _LOGGER.debug(
+            "Calendar coordinator update: program=%s "
+            "rain_delay_started_at=%s rain_delay_remaining=%s",
+            self._program_id,
+            self._delay_start,
+            self._delay_hours,
+        )
+
+        self.async_write_ha_state()
